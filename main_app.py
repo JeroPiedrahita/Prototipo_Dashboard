@@ -3,87 +3,76 @@ import pandas as pd
 import plotly.express as px
 
 # Configuración de la página
-st.set_page_config(page_title="Dashboard Energía Renovable", layout="wide")
+st.set_page_config(page_title="EDA Dinámico - Energía Renovable", layout="wide")
 
-# Estilo para mejorar la visualización
-st.markdown("""
-    <style>
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    </style>
-    """, unsafe_allow_html=True)
+st.title("📊 Herramienta de Análisis Exploratorio de Datos (EDA)")
+st.markdown("Sube tu archivo CSV para generar visualizaciones automáticas sobre proyectos de energía.")
 
-st.title("⚡ Dashboard de Proyectos Energéticos")
-
-# --- CARGA DE DATOS ---
-uploaded_file = st.sidebar.file_uploader("📂 Sube tu archivo CSV", type=["csv"])
+# --- SECCIÓN: Carga de Archivo ---
+uploaded_file = st.sidebar.file_uploader("Sube tu archivo .csv aquí", type=["csv"])
 
 if uploaded_file is not None:
+    # Leer el archivo subido
     df = pd.read_csv(uploaded_file)
     
-    # Preprocesamiento de fechas
+    # Preprocesamiento básico (Convertir fechas si existe la columna)
     if 'Fecha_Entrada_Operacion' in df.columns:
         df['Fecha_Entrada_Operacion'] = pd.to_datetime(df['Fecha_Entrada_Operacion'])
 
-    # --- FILTROS GLOBALES ---
-    st.sidebar.header("⚙️ Filtros Globales")
-    operadores = df['Operador'].unique().tolist()
-    operador_sel = st.sidebar.multiselect("Filtrar por Operador:", operadores, default=operadores)
+    # --- SIDEBAR: Filtros Dinámicos ---
+    st.sidebar.header("Filtros")
     
-    df_global = df[df['Operador'].isin(operador_sel)]
+    # Filtro por Tecnología (si la columna existe)
+    if 'Tecnologia' in df.columns:
+        tecnologias = st.sidebar.multiselect("Tecnología", df['Tecnologia'].unique(), default=df['Tecnologia'].unique())
+        df = df[df['Tecnologia'].isin(tecnologias)]
 
-    # --- MÉTRICAS (CORREGIDAS) ---
+    # --- SECCIÓN 1: Métricas Principales ---
     st.header("📌 Resumen General")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3 = st.columns(3)
     
     with m1:
-        st.metric("Total Proyectos", len(df_global))
+        st.metric("Total de Proyectos", len(df))
     with m2:
-        # Aquí estaba el error: se cerró correctamente el f-string y los corchetes
-        capacidad = df_global['Capacidad_Instalada_MW'].sum()
-        st.metric("Capacidad Total", f"{capacidad:,.1f} MW")
+        if 'Capacidad_Instalada_MW' in df.columns:
+            total_cap = df['Capacidad_Instalada_MW'].sum()
+            st.metric("Capacidad Total", f"{total_cap:,.1f} MW")
     with m3:
-        eficiencia = df_global['Eficiencia_Planta_Pct'].mean()
-        st.metric("Eficiencia Media", f"{eficiencia:.1f}%")
-    with m4:
-        inversion = df_global['Inversion_Inicial_MUSD'].sum()
-        st.metric("Inversión Total", f"${inversion:,.1f}M")
+        if 'Inversion_Inicial_MUSD' in df.columns:
+            total_inv = df['Inversion_Inicial_MUSD'].sum()
+            st.metric("Inversión Total", f"${total_inv:,.1f} MUSD")
 
-    st.divider()
-
-    # --- SECCIÓN: GRÁFICA CON FILTRO AMIGABLE ---
-    st.header("📊 Estado de Proyectos por Energía")
+    # --- SECCIÓN 2: Visualizaciones ---
+    st.header("📈 Visualizaciones")
     
-    col_chart, col_filter = st.columns([3, 1])
+    col1, col2 = st.columns(2)
 
-    with col_filter:
-        st.subheader("🎯 Filtro de Gráfica")
-        tecs_disponibles = df_global['Tecnologia'].unique().tolist()
-        # Selección amigable para el usuario
-        tecs_seleccionadas = st.multiselect(
-            "Selecciona tipo de energía:",
-            options=tecs_disponibles,
-            default=tecs_disponibles
-        )
+    with col1:
+        if 'Tecnologia' in df.columns:
+            st.subheader("Distribución por Tecnología")
+            fig1 = px.pie(df, names='Tecnologia', title="Proyectos por Tipo")
+            st.plotly_chart(fig1, use_container_width=True)
 
-    with col_chart:
-        df_status = df_global[df_global['Tecnologia'].isin(tecs_seleccionadas)]
-        
-        if not df_status.empty:
-            fig_status = px.histogram(
-                df_status, 
-                x="Estado_Actual", 
-                color="Tecnologia",
-                barmode="group",
-                title="Distribución por Estado",
-                color_discrete_sequence=px.colors.qualitative.Prism
-            )
-            st.plotly_chart(fig_status, use_container_width=True)
-        else:
-            st.warning("Selecciona al menos una tecnología para visualizar la gráfica.")
+    with col2:
+        if 'Estado_Actual' in df.columns:
+            st.subheader("Estado de Proyectos")
+            fig2 = px.histogram(df, x='Estado_Actual', color='Estado_Actual', title="Conteo por Estado")
+            st.plotly_chart(fig2, use_container_width=True)
 
-    # --- TABLA DE DATOS ---
-    with st.expander("🔍 Ver tabla de datos filtrados"):
-        st.dataframe(df_global, use_container_width=True)
+    # --- SECCIÓN 3: Relación de Variables ---
+    if 'Capacidad_Instalada_MW' in df.columns and 'Generacion_Diaria_MWh' in df.columns:
+        st.subheader("Relación: Capacidad vs Generación")
+        fig3 = px.scatter(df, x='Capacidad_Instalada_MW', y='Generacion_Diaria_MWh', 
+                          color='Tecnologia' if 'Tecnologia' in df.columns else None,
+                          size='Eficiencia_Planta_Pct' if 'Eficiencia_Planta_Pct' in df.columns else None,
+                          hover_data=['ID_Proyecto'] if 'ID_Proyecto' in df.columns else None)
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # Mostrar Datos
+    with st.expander("Ver Datos Crudos"):
+        st.write(df)
 
 else:
-    st.info("👋 Por favor, sube el archivo CSV desde la barra lateral para generar el reporte.")
+    # Mensaje si no hay archivo
+    st.info("👋 Por favor, sube un archivo CSV desde la barra lateral para comenzar el análisis.")
+    st.image("https://streamlit.io/images/brand/streamlit-logo-secondary-colormark-darktext.png", width=200)
