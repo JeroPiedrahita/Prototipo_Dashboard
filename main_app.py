@@ -2,180 +2,123 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
+from groq import Groq
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Ingeniería EDA Pro", layout="wide", page_icon="⚙️")
+st.set_page_config(page_title="Engineering EDA + AI Assistant", layout="wide", page_icon="⚙️")
 
-# --- DISEÑO DE INTERFAZ Y TARJETAS (CSS AVANZADO) ---
+# --- DISEÑO DE TARJETAS (CSS) ---
 st.markdown("""
     <style>
-    /* Fondo general */
-    .main { background-color: #f4f7f9; }
-    
-    /* Personalización de Tarjetas de Métricas */
     [data-testid="stMetric"] {
-        background-color: #1E293B; /* Azul oscuro pizarra */
+        background-color: #1E293B;
         padding: 20px;
         border-radius: 12px;
         color: #FFFFFF;
         box-shadow: 0 4px 10px rgba(0,0,0,0.15);
         border: 1px solid #334155;
     }
-    
-    /* Color del Título de la métrica */
-    [data-testid="stMetricLabel"] {
-        color: #94A3B8 !important; 
-        font-weight: 600;
-        text-transform: uppercase;
-        font-size: 0.9rem;
-    }
-
-    /* Color del Valor de la métrica */
-    [data-testid="stMetricValue"] {
-        color: #F8FAFC !important;
-        font-size: 1.8rem;
-    }
-
-    /* Tabs personalizados */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFFFFF;
-        border-radius: 5px 5px 0px 0px;
-        padding: 10px 20px;
-    }
+    [data-testid="stMetricLabel"] { color: #94A3B8 !important; font-weight: 600; }
+    [data-testid="stMetricValue"] { color: #F8FAFC !important; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛠️ Analizador de Ingeniería y Datos Complejos")
-st.markdown("Dashboard dinámico para análisis exploratorio profundo con segmentación de muestras.")
+st.title("🛠️ Analizador de Ingeniería con Asistente IA")
 
-# --- BARRA LATERAL: CARGA Y FILTROS ---
-st.sidebar.header("📁 Gestión de Datos")
+# --- BARRA LATERAL ---
+st.sidebar.header("🔑 Configuración")
+groq_api_key = st.sidebar.text_input("Groq API Key:", type="password", help="Introduce tu llave de Groq para habilitar a Llama 3.3")
+
+st.sidebar.divider()
 uploaded_file = st.sidebar.file_uploader("Sube tu archivo CSV", type=["csv"])
 
 if uploaded_file is not None:
-    # Carga inicial
     df_raw = pd.read_csv(uploaded_file)
     
-    # --- SELECTOR DE MUESTRAS ---
-    st.sidebar.divider()
-    st.sidebar.subheader("🔢 Control de Muestreo")
-    total_filas = len(df_raw)
-    num_muestras = st.sidebar.slider(
-        "Muestras a procesar:", 
-        min_value=1, 
-        max_value=total_filas, 
-        value=min(100, total_filas)
-    )
-    
-    # DataFrame procesado según el slider
+    # Selector de muestras
+    num_muestras = st.sidebar.slider("Muestras a procesar:", 1, len(df_raw), min(100, len(df_raw)))
     df = df_raw.head(num_muestras).copy()
 
-    # Identificación de tipos de columnas
-    cat_cols = df.select_dtypes(include=['object', 'bool', 'category']).columns.tolist()
+    # Tipos de columnas
+    cat_cols = df.select_dtypes(include=['object', 'bool']).columns.tolist()
     num_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
-    date_cols = [col for col in df.columns if 'fecha' in col.lower() or 'date' in col.lower()]
-    
-    for col in date_cols:
-        df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    # --- MÉTRICAS SUPERIORES ---
-    st.subheader("📌 Resumen de Muestreo")
+    # --- MÉTRICAS ---
     k1, k2, k3, k4 = st.columns(4)
-    with k1: st.metric("Muestras", f"{df.shape[0]:,}")
-    with k2: st.metric("Variables", f"{df.shape[1]}")
-    with k3: st.metric("Datos Nulos", f"{df.isnull().sum().sum()}")
-    with k4: 
-        variedad = df[cat_cols[0]].nunique() if cat_cols else 0
-        st.metric("Diversidad Cat.", variedad)
+    with k1: st.metric("Muestras", f"{len(df)}")
+    with k2: st.metric("Columnas", f"{df.shape[1]}")
+    with k3: st.metric("Nulos", f"{df.isnull().sum().sum()}")
+    with k4: st.metric("Inversión Prom.", f"${df[num_cols[-1]].mean():.1f}M" if num_cols else "0")
 
     st.divider()
 
-    # --- NAVEGACIÓN PRINCIPAL ---
-    tab_cat, tab_num, tab_rel, tab_corr, tab_raw = st.tabs([
-        "🏷️ Cualitativo", "🔢 Cuantitativo", "🔍 Relaciones", "🧬 Estadístico", "📄 Tabla"
-    ])
+    # --- NAVEGACIÓN ---
+    tabs = st.tabs(["📊 Visualización", "🧬 Estadística", "🤖 Asistente IA", "📄 Tabla"])
 
-    # 1. ANÁLISIS CUALITATIVO
-    with tab_cat:
-        if cat_cols:
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                cat_var = st.selectbox("Categoría:", cat_cols, key="tab1_cat")
-                chart_style = st.radio("Estilo:", ["Barras", "Donut", "Treemap"])
-            with c2:
-                counts = df[cat_var].value_counts().reset_index()
-                counts.columns = [cat_var, 'Conteo']
-                
-                if chart_style == "Barras":
-                    fig = px.bar(counts, x=cat_var, y='Conteo', color=cat_var, text_auto=True)
-                elif chart_style == "Donut":
-                    fig = px.pie(counts, names=cat_var, values='Conteo', hole=0.5)
-                else:
-                    fig = px.treemap(counts, path=[cat_var], values='Conteo')
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("No hay columnas categóricas.")
+    with tabs[0]:
+        col_v1, col_v2 = st.columns(2)
+        with col_v1:
+            if cat_cols:
+                v_cat = st.selectbox("Analizar Categoría:", cat_cols)
+                st.plotly_chart(px.pie(df, names=v_cat, hole=0.4), use_container_width=True)
+        with col_v2:
+            if num_cols:
+                v_num = st.selectbox("Analizar Variable:", num_cols)
+                st.plotly_chart(px.histogram(df, x=v_num, marginal="box", color_discrete_sequence=['#3b82f6']), use_container_width=True)
 
-    # 2. ANÁLISIS CUANTITATIVO
-    with tab_num:
-        if num_cols:
-            c3, c4 = st.columns([1, 3])
-            with c3:
-                num_var = st.selectbox("Variable:", num_cols, key="tab2_num")
-                hue_var = st.selectbox("Segmentar por:", [None] + cat_cols, key="tab2_hue")
-            with c4:
-                fig_num = px.histogram(df, x=num_var, color=hue_var, marginal="box", 
-                                       title=f"Distribución Técnica de {num_var}",
-                                       barmode="overlay", opacity=0.7)
-                st.plotly_chart(fig_num, use_container_width=True)
-        else:
-            st.warning("No hay columnas numéricas.")
-
-    # 3. RELACIONES
-    with tab_rel:
-        if len(num_cols) >= 2:
-            r1, r2, r3, r4 = st.columns(4)
-            with r1: x_ax = st.selectbox("Eje X:", num_cols, key="relx")
-            with r2: y_ax = st.selectbox("Eje Y:", num_cols, index=1, key="rely")
-            with r3: c_ax = st.selectbox("Color:", [None] + cat_cols, key="relc")
-            with r4: s_ax = st.selectbox("Tamaño:", [None] + num_cols, key="rels")
-            
-            fig_scat = px.scatter(df, x=x_ax, y=y_ax, color=c_ax, size=s_ax,
-                                  title=f"Dispersión: {x_ax} vs {y_ax}", template="plotly_white")
-            st.plotly_chart(fig_scat, use_container_width=True)
-        else:
-            st.info("Se necesitan más datos numéricos.")
-
-    # 4. ESTADÍSTICO (SEABORN)
-    with tab_corr:
+    with tabs[1]:
         if len(num_cols) > 1:
-            st.subheader("Matriz de Correlación (Pearson)")
-            fig_sns, ax = plt.subplots(figsize=(12, 6))
-            sns.heatmap(df[num_cols].corr(), annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
-            st.pyplot(fig_sns)
-        else:
-            st.info("Sin suficientes variables numéricas para correlación.")
+            fig_corr, ax = plt.subplots(figsize=(10, 5))
+            sns.heatmap(df[num_cols].corr(), annot=True, cmap="coolwarm", ax=ax)
+            st.pyplot(fig_corr)
 
-    # 5. TABLA DE DATOS
-    with tab_raw:
-        st.write(f"Mostrando las primeras {num_muestras} filas del archivo:")
+    # --- SECCIÓN DEL ASISTENTE IA ---
+    with tabs[2]:
+        st.header("🤖 Análisis Llama 3.3 Versatile")
+        
+        if not groq_api_key:
+            st.warning("⚠️ Por favor, ingresa tu API Key de Groq en la barra lateral para usar el asistente.")
+        else:
+            if st.button("Generar Informe de Hallazgos"):
+                with st.spinner("Llama 3.3 está analizando tus datos..."):
+                    try:
+                        client = Groq(api_key=groq_api_key)
+                        
+                        # Preparar contexto para el LLM
+                        resumen_datos = df.describe(include='all').to_string()
+                        conteo_nulos = df.isnull().sum().to_string()
+                        
+                        prompt = f"""
+                        Actúa como un experto consultor de ingeniería y científico de datos. 
+                        Analiza el siguiente resumen de un conjunto de datos (primeras {num_muestras} filas):
+                        
+                        RESUMEN ESTADÍSTICO:
+                        {resumen_datos}
+                        
+                        DATOS NULOS:
+                        {conteo_nulos}
+                        
+                        Tarea: Describe los 3 hallazgos más importantes, detecta posibles anomalías y 
+                        da una recomendación técnica basada en la eficiencia y la inversión.
+                        Responde en español de forma profesional y concisa.
+                        """
+                        
+                        chat_completion = client.chat.completions.create(
+                            messages=[{"role": "user", "content": prompt}],
+                            model="llama-3.3-70b-versatile",
+                        )
+                        
+                        st.markdown("### 📋 Informe de la IA")
+                        st.write(chat_completion.choices[0].message.content)
+                        st.success("Análisis completado exitosamente.")
+                        
+                    except Exception as e:
+                        st.error(f"Error al conectar con Groq: {e}")
+
+    with tabs[3]:
         st.dataframe(df, use_container_width=True)
-        csv_data = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Descargar Selección en CSV", csv_data, "muestreo_datos.csv", "text/csv")
 
 else:
-    # Pantalla de bienvenida
-    st.info("👋 Bienvenido. Por favor, sube un archivo CSV en el panel lateral para comenzar.")
-    st.markdown("""
-    Este dashboard permite:
-    - **Muestreo en tiempo real** mediante la barra deslizante lateral.
-    - **Análisis de outliers** con diagramas de caja marginales.
-    - **Correlación estadística** profunda con mapas de calor.
-    - **Visualización jerárquica** con Treemaps.
-    """)
+    st.info("Suba un archivo para comenzar.")
